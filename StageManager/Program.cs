@@ -1,51 +1,92 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Media.Animation;
 
 namespace StageManager
 {
+	using static StageManager.MouseHook;
 	using HWND = System.IntPtr;
 	class Program
 	{
 
 		static List<Window> windows;
 		static HWND activeHandle;
+		static bool mouseDrag = false;
 		static void Main(string[] args)
 		{
-
+			MouseHook.Start();
+			windows = new List<Window>();
 			activeHandle = GetForegroundWindow();
 			updateActiveWindows();
 
+			MouseHook.MouseAction += (object sender, MouseMessages e) =>
+			{
+				if(e == MouseMessages.WM_LBUTTONDOWN)
+				{
+					mouseDrag = true;
+					Console.WriteLine("Left mouse down!");
+				} else if(mouseDrag && e == MouseMessages.WM_LBUTTONUP)
+				{
+					mouseDrag = false;
+					Console.WriteLine("Left mouse up!");
+					updatePositions();
+				}
+			};
+
+
 			updatePositions();
+
+
 
 
 			dele = new WinEventDelegate(WinEventProc);
 			IntPtr m_hhook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, dele, 0, 0, WINEVENT_OUTOFCONTEXT);
 			Application.Run(); //<----
+
+			MouseHook.stop();
 		}
 
 		private static void updateActiveWindows()
 		{
-			object context = new { };
-			windows = OpenWindowGetter.GetOpenWindows(context);
-
-
-			Console.Clear();
-			foreach (var window in windows)
+			var newWindows = OpenWindowGetter.GetOpenWindows();
+			newWindows.Sort(delegate (Window x, Window y)
 			{
-				Console.WriteLine(window.title);
+				return findWindowIndexByHandle(x.handle) - findWindowIndexByHandle(y.handle);
+			});
 
-			}
+			windows = newWindows;
+		}
+		static bool IsFullscreen(IntPtr wndHandle, Screen screen)
+		{
+			RECT r = new RECT();
+			GetWindowRect(wndHandle, ref r);
+			return new Rectangle(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top)
+								  .Contains(screen.Bounds);
 		}
 
 		static void updatePositions()
 		{
 			updateActiveWindows();
+
+			foreach(var window in windows)
+			{
+				if (IsFullscreen(window.handle, Screen.PrimaryScreen))
+				{
+					return;
+				}
+			}
+
+			if(mouseDrag)
+			{
+				return;
+			}
 
 			int centerNewIndex = windows.Count / 2;
 			for (int i = 0; i < windows.Count; i++)
@@ -57,22 +98,110 @@ namespace StageManager
 					windows.Insert(centerNewIndex, window);
 				}
 			}
+			Dictionary<Window, Point> newPositions = new Dictionary<Window, Point>();
 			for (int i = 0; i < windows.Count; i++)
 			{
 				var window = windows[i];
-				positionAppOnFraction(window, windows.Count + (windows.Count % 2 == 0 ? 1 : 0), i + 1);
+				newPositions[window] = getWindowNewPoint(window, windows.Count + (windows.Count % 2 == 0 ? 1 : 0), i + 1);
 			}
+
+			Console.Clear();
+			foreach (var window in windows)
+			{
+				Console.WriteLine(window.program);
+
+			}
+
+			startBatchedWindowAnimations(0.4f, newPositions);
 		}
 
-		static void positionAppOnFraction(Window window, int sections, int position)
+		static Nullable<Window> findWindowByHandle(HWND handle)
+		{
+
+			foreach (var window in windows)
+			{
+				if (window.handle == handle)
+				{
+					return window;
+				}
+			}
+			return null;
+		}
+
+		static int findWindowIndexByHandle(HWND handle)
+		{
+			for (int i = 0; i < windows.Count; i++)
+			{
+				var window = windows[i];
+				if (window.handle == handle)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+
+		static bool animationsEnabled = true;
+		static Thread animationThread = null;
+		static void startBatchedWindowAnimations(double seconds, Dictionary<Window, Point> newPositions)
+		{
+			if (animationThread != null)
+			{
+				animationThread.Abort();
+			}
+
+			animationThread = new Thread(() =>
+			{
+				if (!animationsEnabled)
+				{
+					foreach (var value in newPositions)
+					{
+						var window = value.Key;
+						var newX = value.Value.X;
+						var newY = value.Value.Y;
+						SetWindowPos(window.handle, 0,
+							(int)newX,
+							(int)newY,
+						0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_SHOWWINDOW
+						);
+					}
+				}
+				else
+				{
+					double FPS = 60;
+					var ease = new PowerEase();
+					ease.EasingMode = EasingMode.EaseIn;
+					for (int i = 0; i <= FPS * seconds; i++)
+					{
+						double actualTime = 1 / (FPS * seconds) * i;
+						foreach (var value in newPositions)
+						{
+							var window = value.Key;
+							var newX = value.Value.X;
+							var newY = value.Value.Y;
+							int originalX = window.rect.Left;
+							int originalY = window.rect.Top;
+							SetWindowPos(window.handle, 0,
+								(int)(originalX + (newX - originalX) * ease.Ease(actualTime)),
+								(int)(originalY + (newY - originalY) * ease.Ease(actualTime)),
+							0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_SHOWWINDOW
+							);
+						}
+						Thread.Sleep((int)(1000 / FPS));
+					}
+				}
+
+			});
+			animationThread.Start();
+		}
+
+		static Point getWindowNewPoint(Window window, int sections, int position)
 		{
 			int sectionWidth = Screen.PrimaryScreen.WorkingArea.Width / sections;
 			int horizzontalScreenPosition = sectionWidth / 2 + sectionWidth * (position - 1);
-			SetWindowPos(window.handle, 0,
+			return new Point(
 				horizzontalScreenPosition - window.rect.Width() / 2,
-				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.rect.Height() / 2,
-				0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_SHOWWINDOW
-				);
+				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.rect.Height() / 2);
 		}
 
 		static void centerApp(Window window)
@@ -109,6 +238,10 @@ namespace StageManager
 
 		[DllImport("user32.dll", EntryPoint = "SetWindowPos")]
 		public static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int Y, int cx, int cy, int wFlags);
+		
+		[DllImport("user32.dll")]
+		private static extern bool GetWindowRect(IntPtr hWnd, [In, Out] ref RECT rect);
+
 
 	}
 }
