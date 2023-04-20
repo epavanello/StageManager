@@ -11,13 +11,13 @@ using System.Windows.Media.Animation;
 
 namespace StageManager
 {
-	using static StageManager.MouseHook;
 	using HWND = System.IntPtr;
 	class Program
 	{
 
 		static List<Window> windows;
 		static HWND activeHandle;
+		static bool mouseDown = false;
 		static bool mouseDrag = false;
 		static void Main(string[] args)
 		{
@@ -26,17 +26,31 @@ namespace StageManager
 			activeHandle = GetForegroundWindow();
 			updateActiveWindows();
 
-			MouseHook.MouseAction += (object sender, MouseMessages e) =>
+			MouseHook.MouseAction += async (object sender, MouseHook.MouseMessages e) =>
 			{
-				if(e == MouseMessages.WM_LBUTTONDOWN)
+				if (e == MouseHook.MouseMessages.WM_LBUTTONDOWN)
+				{
+					mouseDown = true;
+				}
+				else if (mouseDown && e == MouseHook.MouseMessages.WM_MOUSEMOVE)
 				{
 					mouseDrag = true;
-					Console.WriteLine("Left mouse down!");
-				} else if(mouseDrag && e == MouseMessages.WM_LBUTTONUP)
+				}
+				else if (e == MouseHook.MouseMessages.WM_LBUTTONUP)
 				{
-					mouseDrag = false;
-					Console.WriteLine("Left mouse up!");
-					updatePositions();
+					if (mouseDown && mouseDrag)
+					{
+						mouseDown = false;
+						mouseDrag = false;
+
+						await Task.Delay(50);
+						updatePositions();
+					}
+					else
+					{
+						mouseDown = false;
+						mouseDrag = false;
+					}
 				}
 			};
 
@@ -71,21 +85,23 @@ namespace StageManager
 								  .Contains(screen.Bounds);
 		}
 
+
 		static void updatePositions()
 		{
+			if (mouseDown && mouseDrag)
+			{
+				Console.WriteLine("Skipped: Mouse down or drag");
+				return;
+			}
+
 			updateActiveWindows();
 
-			foreach(var window in windows)
+			foreach (var window in windows)
 			{
 				if (IsFullscreen(window.handle, Screen.PrimaryScreen))
 				{
 					return;
 				}
-			}
-
-			if(mouseDrag)
-			{
-				return;
 			}
 
 			int centerNewIndex = windows.Count / 2;
@@ -152,6 +168,7 @@ namespace StageManager
 
 			animationThread = new Thread(() =>
 			{
+				Console.WriteLine("Animation started");
 				if (!animationsEnabled)
 				{
 					foreach (var value in newPositions)
@@ -190,6 +207,7 @@ namespace StageManager
 						Thread.Sleep((int)(1000 / FPS));
 					}
 				}
+				Console.WriteLine("Animation ended");
 
 			});
 			animationThread.Start();
@@ -238,7 +256,7 @@ namespace StageManager
 
 		[DllImport("user32.dll", EntryPoint = "SetWindowPos")]
 		public static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int Y, int cx, int cy, int wFlags);
-		
+
 		[DllImport("user32.dll")]
 		private static extern bool GetWindowRect(IntPtr hWnd, [In, Out] ref RECT rect);
 
