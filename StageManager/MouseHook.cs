@@ -13,9 +13,9 @@ namespace StageManager
         public static event EventHandler<MouseMessages> MouseAction = delegate { };
 
         public static void Start() => _hookID = SetHook(_proc);
-        public static void stop() => UnhookWindowsHookEx(_hookID);
+        public static void Stop() => UnhookWindowsHookEx(_hookID);
 
-        private static LowLevelMouseProc _proc = HookCallback;
+        private static readonly LowLevelMouseProc _proc = HookCallback;
         private static IntPtr _hookID = IntPtr.Zero;
 
         private static IntPtr SetHook(LowLevelMouseProc proc)

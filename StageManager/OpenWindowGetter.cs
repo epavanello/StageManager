@@ -34,13 +34,13 @@ namespace StageManager
 	public struct Window
 	{
 		public HWND handle;
-		private Nullable<RECT> _rect;
-		public RECT rect
+		private RECT? _rect;
+		public RECT Rect
 		{
 			get { 
 				if(_rect == null)
 				{
-					updateRect();
+					UpdateRect();
 				}
 				return _rect.Value;
 			}
@@ -48,10 +48,9 @@ namespace StageManager
 		public string title;
 		public string program;
 
-		void updateRect()
+		void UpdateRect()
 		{
-			RECT newRect;
-			GetWindowRect(new HandleRef(null, handle), out newRect);
+			GetWindowRect(new HandleRef(null, handle), out RECT newRect);
 			_rect = newRect;
 		}
 
@@ -104,8 +103,7 @@ namespace StageManager
 					return true;
 				}
 
-				uint pID;
-				GetWindowThreadProcessId(hWnd, out pID);
+				GetWindowThreadProcessId(hWnd, out uint pID);
 
 				IntPtr proc;
 				if ((proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, (int)pID)) == IntPtr.Zero)

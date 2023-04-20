@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -11,7 +9,7 @@ using System.Windows.Media.Animation;
 
 namespace StageManager
 {
-	using HWND = System.IntPtr;
+	using HWND = IntPtr;
 	class Program
 	{
 
@@ -19,12 +17,12 @@ namespace StageManager
 		static HWND activeHandle;
 		static bool mouseDown = false;
 		static bool mouseDrag = false;
-		static void Main(string[] args)
+		static void Main()
 		{
 			MouseHook.Start();
 			windows = new List<Window>();
 			activeHandle = GetForegroundWindow();
-			updateActiveWindows();
+			UpdateActiveWindows();
 
 			MouseHook.MouseAction += async (object sender, MouseHook.MouseMessages e) =>
 			{
@@ -44,7 +42,8 @@ namespace StageManager
 						mouseDrag = false;
 
 						await Task.Delay(50);
-						updatePositions();
+						Console.WriteLine("Stop dragging");
+						UpdatePositions();
 					}
 					else
 					{
@@ -55,29 +54,29 @@ namespace StageManager
 			};
 
 
-			updatePositions();
+			UpdatePositions();
 
 
 
-
+			// Handle window switching
 			dele = new WinEventDelegate(WinEventProc);
-			IntPtr m_hhook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, dele, 0, 0, WINEVENT_OUTOFCONTEXT);
+			HWND m_hhook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, HWND.Zero, dele, 0, 0, WINEVENT_OUTOFCONTEXT);
 			Application.Run(); //<----
 
-			MouseHook.stop();
+			MouseHook.Stop();
 		}
 
-		private static void updateActiveWindows()
+		private static void UpdateActiveWindows()
 		{
 			var newWindows = OpenWindowGetter.GetOpenWindows();
 			newWindows.Sort(delegate (Window x, Window y)
 			{
-				return findWindowIndexByHandle(x.handle) - findWindowIndexByHandle(y.handle);
+				return FindWindowIndexByHandle(x.handle) - FindWindowIndexByHandle(y.handle);
 			});
 
 			windows = newWindows;
 		}
-		static bool IsFullscreen(IntPtr wndHandle, Screen screen)
+		static bool IsFullscreen(HWND wndHandle, Screen screen)
 		{
 			RECT r = new RECT();
 			GetWindowRect(wndHandle, ref r);
@@ -86,15 +85,15 @@ namespace StageManager
 		}
 
 
-		static void updatePositions()
+		static void UpdatePositions()
 		{
 			if (mouseDown && mouseDrag)
 			{
-				Console.WriteLine("Skipped: Mouse down or drag");
+				Console.WriteLine("Skipped because of dragging");
 				return;
 			}
 
-			updateActiveWindows();
+			UpdateActiveWindows();
 
 			foreach (var window in windows)
 			{
@@ -118,33 +117,13 @@ namespace StageManager
 			for (int i = 0; i < windows.Count; i++)
 			{
 				var window = windows[i];
-				newPositions[window] = getWindowNewPoint(window, windows.Count + (windows.Count % 2 == 0 ? 1 : 0), i + 1);
+				newPositions[window] = GetWindowNewPoint(window, windows.Count + (windows.Count % 2 == 0 ? 1 : 0), i + 1);
 			}
 
-			Console.Clear();
-			foreach (var window in windows)
-			{
-				Console.WriteLine(window.program);
-
-			}
-
-			startBatchedWindowAnimations(0.4f, newPositions);
+			StartBatchedWindowAnimations(0.4f, newPositions);
 		}
 
-		static Nullable<Window> findWindowByHandle(HWND handle)
-		{
-
-			foreach (var window in windows)
-			{
-				if (window.handle == handle)
-				{
-					return window;
-				}
-			}
-			return null;
-		}
-
-		static int findWindowIndexByHandle(HWND handle)
+		static int FindWindowIndexByHandle(HWND handle)
 		{
 			for (int i = 0; i < windows.Count; i++)
 			{
@@ -159,12 +138,9 @@ namespace StageManager
 
 		static bool animationsEnabled = true;
 		static Thread animationThread = null;
-		static void startBatchedWindowAnimations(double seconds, Dictionary<Window, Point> newPositions)
+		static void StartBatchedWindowAnimations(double seconds, Dictionary<Window, Point> newPositions)
 		{
-			if (animationThread != null)
-			{
-				animationThread.Abort();
-			}
+			animationThread?.Abort();
 
 			animationThread = new Thread(() =>
 			{
@@ -177,8 +153,8 @@ namespace StageManager
 						var newX = value.Value.X;
 						var newY = value.Value.Y;
 						SetWindowPos(window.handle, 0,
-							(int)newX,
-							(int)newY,
+							newX,
+							newY,
 						0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_SHOWWINDOW
 						);
 					}
@@ -186,8 +162,10 @@ namespace StageManager
 				else
 				{
 					double FPS = 60;
-					var ease = new PowerEase();
-					ease.EasingMode = EasingMode.EaseIn;
+					var ease = new PowerEase
+					{
+						EasingMode = EasingMode.EaseIn
+					};
 					for (int i = 0; i <= FPS * seconds; i++)
 					{
 						double actualTime = 1 / (FPS * seconds) * i;
@@ -196,8 +174,8 @@ namespace StageManager
 							var window = value.Key;
 							var newX = value.Value.X;
 							var newY = value.Value.Y;
-							int originalX = window.rect.Left;
-							int originalY = window.rect.Top;
+							int originalX = window.Rect.Left;
+							int originalY = window.Rect.Top;
 							SetWindowPos(window.handle, 0,
 								(int)(originalX + (newX - originalX) * ease.Ease(actualTime)),
 								(int)(originalY + (newY - originalY) * ease.Ease(actualTime)),
@@ -213,52 +191,41 @@ namespace StageManager
 			animationThread.Start();
 		}
 
-		static Point getWindowNewPoint(Window window, int sections, int position)
+		static Point GetWindowNewPoint(Window window, int sections, int position)
 		{
 			int sectionWidth = Screen.PrimaryScreen.WorkingArea.Width / sections;
 			int horizzontalScreenPosition = sectionWidth / 2 + sectionWidth * (position - 1);
 			return new Point(
-				horizzontalScreenPosition - window.rect.Width() / 2,
-				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.rect.Height() / 2);
-		}
-
-		static void centerApp(Window window)
-		{
-			SetWindowPos(window.handle, 0,
-				Screen.PrimaryScreen.WorkingArea.Width / 2 - window.rect.Width() / 2,
-				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.rect.Height() / 2,
-				0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_SHOWWINDOW
-				);
-
+				horizzontalScreenPosition - window.Rect.Width() / 2,
+				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.Rect.Height() / 2);
 		}
 
 		static WinEventDelegate dele = null; //STATIC
-		delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
-		public static void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime) //STATIC
+		delegate void WinEventDelegate(HWND hWinEventHook, uint eventType, HWND hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+		public static void WinEventProc(HWND hWinEventHook, uint eventType, HWND hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime) //STATIC
 		{
 			activeHandle = GetForegroundWindow();
-			updatePositions();
+			Console.WriteLine("Active window changed");
+			UpdatePositions();
 		}
 
 		[DllImport("user32.dll")]
-		static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+		static extern HWND SetWinEventHook(uint eventMin, uint eventMax, HWND hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
 
 		private const uint WINEVENT_OUTOFCONTEXT = 0;
 		private const uint EVENT_SYSTEM_FOREGROUND = 3;
-
-		const short SWP_NOMOVE = 0X2;
 		const short SWP_NOSIZE = 1;
 		const short SWP_NOZORDER = 0X4;
 		const int SWP_SHOWWINDOW = 0x0040;
 
 		[DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
-		private static extern IntPtr GetForegroundWindow();
+		private static extern HWND GetForegroundWindow();
 
 		[DllImport("user32.dll", EntryPoint = "SetWindowPos")]
-		public static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int x, int Y, int cx, int cy, int wFlags);
+		public static extern HWND SetWindowPos(HWND hWnd, int hWndInsertAfter, int x, int Y, int cx, int cy, int wFlags);
 
 		[DllImport("user32.dll")]
-		private static extern bool GetWindowRect(IntPtr hWnd, [In, Out] ref RECT rect);
+		private static extern bool GetWindowRect(HWND hWnd, [In, Out] ref RECT rect);
 
 
 	}
