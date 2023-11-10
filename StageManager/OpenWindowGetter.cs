@@ -37,8 +37,9 @@ namespace StageManager
 		private RECT? _rect;
 		public RECT Rect
 		{
-			get { 
-				if(_rect == null)
+			get
+			{
+				if (_rect == null)
 				{
 					UpdateRect();
 				}
@@ -56,7 +57,8 @@ namespace StageManager
 
 		public Window(HWND handle,
 		string title,
-		string program)
+		string program
+		)
 		{
 			this.handle = handle;
 			this._rect = null;
@@ -98,7 +100,7 @@ namespace StageManager
 				StringBuilder builder = new StringBuilder(length);
 				GetWindowText(hWnd, builder, length + 1);
 				var title = builder.ToString();
-				if(blacklistTitles.Contains(title))
+				if (blacklistTitles.Contains(title))
 				{
 					return true;
 				}

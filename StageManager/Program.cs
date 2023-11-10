@@ -15,12 +15,13 @@ namespace StageManager
 
 		static List<Window> windows;
 		static HWND activeHandle;
+		static List<HWND> skipHandles;
 		static bool mouseDown = false;
 		static bool mouseDrag = false;
 		static void Main()
 		{
-			MouseHook.Start();
 			windows = new List<Window>();
+			skipHandles = new List<HWND>();
 			activeHandle = GetForegroundWindow();
 			UpdateActiveWindows();
 
@@ -36,13 +37,21 @@ namespace StageManager
 				}
 				else if (e == MouseHook.MouseMessages.WM_LBUTTONUP)
 				{
-					if (mouseDown && mouseDrag)
+					bool changedActiveWindow = false;
+					// verify if new foreground window is different from the old one, then update positions
+					var newActiveHandle = GetForegroundWindow();
+					changedActiveWindow = newActiveHandle != activeHandle;
+
+					if (mouseDown && mouseDrag || changedActiveWindow)
 					{
 						mouseDown = false;
 						mouseDrag = false;
 
-						await Task.Delay(50);
-						Console.WriteLine("Stop dragging");
+						if (changedActiveWindow)
+						{
+							activeHandle = newActiveHandle;
+						}
+						await Task.Delay(10);
 						UpdatePositions();
 					}
 					else
@@ -52,7 +61,28 @@ namespace StageManager
 					}
 				}
 			};
+			MouseHook.Start();
 
+			Console.WriteLine("Ctrl + Shift + S to ignore/add window");
+
+			KeyboardHook.KeyPressed += (object sender, KeyPressedArgs e) =>
+			{
+				if (e.KeyCode == Keys.S && (Control.ModifierKeys & Keys.Shift) == Keys.Shift && (Control.ModifierKeys & Keys.Control) == Keys.Control)
+				{
+					if (skipHandles.Contains(activeHandle))
+					{
+						skipHandles.Remove(activeHandle);
+						Console.WriteLine("Added");
+					}
+					else
+					{
+						skipHandles.Add(activeHandle);
+						Console.WriteLine("Ignored");
+					}
+					UpdatePositions();
+				}
+			};
+			KeyboardHook.Start();
 
 			UpdatePositions();
 
@@ -89,7 +119,6 @@ namespace StageManager
 		{
 			if (mouseDown && mouseDrag)
 			{
-				Console.WriteLine("Skipped because of dragging");
 				return;
 			}
 
@@ -103,21 +132,34 @@ namespace StageManager
 				}
 			}
 
-			int centerNewIndex = windows.Count / 2;
-			for (int i = 0; i < windows.Count; i++)
+			var notSkippedWindows = new List<Window>();
+			foreach (var window in windows)
 			{
-				var window = windows[i];
+				if (!skipHandles.Contains(window.handle))
+				{
+					notSkippedWindows.Add(window);
+				}
+			}
+
+			int centerNewIndex = notSkippedWindows.Count / 2;
+			for (int i = 0; i < notSkippedWindows.Count; i++)
+			{
+				var window = notSkippedWindows[i];
 				if (window.handle == activeHandle)
 				{
-					windows.RemoveAt(i);
-					windows.Insert(centerNewIndex, window);
+					notSkippedWindows.RemoveAt(i);
+					notSkippedWindows.Insert(centerNewIndex, window);
 				}
 			}
 			Dictionary<Window, Point> newPositions = new Dictionary<Window, Point>();
-			for (int i = 0; i < windows.Count; i++)
+			for (int i = 0; i < notSkippedWindows.Count; i++)
 			{
-				var window = windows[i];
-				newPositions[window] = GetWindowNewPoint(window, windows.Count + (windows.Count % 2 == 0 ? 1 : 0), i + 1);
+				var window = notSkippedWindows[i];
+				if (skipHandles.Contains(window.handle))
+				{
+					continue;
+				}
+				newPositions[window] = GetWindowNewPoint(window, notSkippedWindows.Count + (notSkippedWindows.Count % 2 == 0 ? 1 : 0), i + 1);
 			}
 
 			StartBatchedWindowAnimations(0.4f, newPositions);
@@ -137,14 +179,28 @@ namespace StageManager
 		}
 
 		static bool animationsEnabled = true;
-		static Thread animationThread = null;
-		static void StartBatchedWindowAnimations(double seconds, Dictionary<Window, Point> newPositions)
+		static Task animationTask = null;
+		static CancellationTokenSource cancellationTokenSource = null;
+		static async void StartBatchedWindowAnimations(double seconds, Dictionary<Window, Point> newPositions)
 		{
-			animationThread?.Abort();
+			cancellationTokenSource?.Cancel();
+			cancellationTokenSource = new CancellationTokenSource();
+			var cancellationToken = cancellationTokenSource.Token;
 
-			animationThread = new Thread(() =>
+			if (animationTask != null)
 			{
-				Console.WriteLine("Animation started");
+				try
+				{
+					await animationTask;
+				}
+				catch (TaskCanceledException)
+				{
+					// Ignora l'eccezione se l'attività è stata annullata
+				}
+			}
+
+			animationTask = Task.Run(() =>
+			{
 				if (!animationsEnabled)
 				{
 					foreach (var value in newPositions)
@@ -168,6 +224,11 @@ namespace StageManager
 					};
 					for (int i = 0; i <= FPS * seconds; i++)
 					{
+						if (cancellationToken.IsCancellationRequested)
+						{
+							return;
+						}
+
 						double actualTime = 1 / (FPS * seconds) * i;
 						foreach (var value in newPositions)
 						{
@@ -185,11 +246,10 @@ namespace StageManager
 						Thread.Sleep((int)(1000 / FPS));
 					}
 				}
-				Console.WriteLine("Animation ended");
 
-			});
-			animationThread.Start();
+			}, cancellationToken);
 		}
+
 
 		static Point GetWindowNewPoint(Window window, int sections, int position)
 		{
@@ -197,16 +257,19 @@ namespace StageManager
 			int horizzontalScreenPosition = sectionWidth / 2 + sectionWidth * (position - 1);
 			return new Point(
 				horizzontalScreenPosition - window.Rect.Width() / 2,
-				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.Rect.Height() / 2);
+				Screen.PrimaryScreen.WorkingArea.Height / 2 - window.Rect.Height() / 2 + 300);
 		}
 
 		static WinEventDelegate dele = null; //STATIC
 		delegate void WinEventDelegate(HWND hWinEventHook, uint eventType, HWND hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
 		public static void WinEventProc(HWND hWinEventHook, uint eventType, HWND hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime) //STATIC
 		{
-			activeHandle = GetForegroundWindow();
-			Console.WriteLine("Active window changed");
-			UpdatePositions();
+			var newActiveHandle = GetForegroundWindow();
+			if (newActiveHandle != activeHandle)
+			{
+				activeHandle = newActiveHandle;
+				UpdatePositions();
+			}
 		}
 
 		[DllImport("user32.dll")]
